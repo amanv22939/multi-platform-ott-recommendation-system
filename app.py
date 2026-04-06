@@ -1,7 +1,5 @@
 import os
 import re
-import ast
-import json
 import streamlit as st
 import pandas as pd
 import requests
@@ -30,14 +28,6 @@ html, body, [class*="css"] {
     font-weight: 800;
     color: white;
     margin-bottom: 0.5rem;
-}
-
-.section-title {
-    font-size: 2rem;
-    font-weight: 700;
-    color: white;
-    margin-top: 1rem;
-    margin-bottom: 1rem;
 }
 
 .subtitle {
@@ -82,34 +72,12 @@ html, body, [class*="css"] {
     margin-top: 0.7rem;
     min-height: 95px;
 }
-
-.small-title {
-    color: white;
-    font-size: 1.05rem;
-    font-weight: 700;
-    margin-top: 0.8rem;
-    margin-bottom: 0.6rem;
-    min-height: 58px;
-}
-
-.small-meta {
-    color: #d9d9d9;
-    font-size: 0.95rem;
-    margin-bottom: 0.45rem;
-}
-
-hr {
-    border: none;
-    border-top: 1px solid rgba(255,255,255,0.08);
-    margin-top: 2rem;
-    margin-bottom: 2rem;
-}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-title">🎬 Multi-Platform OTT Recommendation System</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="subtitle">Search across OTT datasets + movie libraries, discover similar titles, cross-platform matches, trending picks, and top-rated content.</div>',
+    '<div class="subtitle">Search movie/show and get smart recommendations across platforms.</div>',
     unsafe_allow_html=True
 )
 
@@ -138,18 +106,7 @@ def parse_numeric_rating(value):
     return 0.0
 
 
-def safe_text(value):
-    if pd.isna(value):
-        return ""
-    return str(value).strip()
-
-
 def parse_genres(value):
-    """
-    Handles:
-    - normal text genres
-    - JSON-like strings from TMDB datasets
-    """
     if pd.isna(value):
         return ""
 
@@ -158,37 +115,13 @@ def parse_genres(value):
     if not text:
         return ""
 
-    # Try JSON / list-of-dicts format
-    try:
-        parsed = ast.literal_eval(text)
-        if isinstance(parsed, list):
-            names = []
-            for item in parsed:
-                if isinstance(item, dict):
-                    if "name" in item:
-                        names.append(str(item["name"]))
-                    else:
-                        names.append(str(item))
-                else:
-                    names.append(str(item))
-            return ", ".join(names)
-    except Exception:
-        pass
-
     return text
 
 
 def normalize_df(df, source_name, platform_label):
-    """
-    Standardizes different dataset schemas into a common format.
-    Final columns:
-    title, director, cast, listed_in, description, country, rating, type, platform
-    """
-
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
 
-    # Start with empty standardized dataframe
     out = pd.DataFrame()
 
     # TITLE
@@ -206,13 +139,13 @@ def normalize_df(df, source_name, platform_label):
     cast_col = next((c for c in possible_cast_cols if c in df.columns), None)
     out["cast"] = df[cast_col].astype(str) if cast_col else ""
 
-    # GENRES / LISTED_IN
+    # GENRE
     if "listed_in" in df.columns:
-        out["listed_in"] = df["listed_in"].apply(parse_genres)
+        out["listed_in"] = df["listed_in"].astype(str)
     elif "genres" in df.columns:
-        out["listed_in"] = df["genres"].apply(parse_genres)
+        out["listed_in"] = df["genres"].astype(str)
     elif "genre" in df.columns:
-        out["listed_in"] = df["genre"].apply(parse_genres)
+        out["listed_in"] = df["genre"].astype(str)
     else:
         out["listed_in"] = ""
 
@@ -237,16 +170,11 @@ def normalize_df(df, source_name, platform_label):
     elif "media_type" in df.columns:
         out["type"] = df["media_type"].astype(str)
     else:
-        # If source looks like movie dataset, default Movie
-        if source_name in ["tmdb_5000_movies.csv", "movies_updated.csv", "indian_movies.csv"]:
-            out["type"] = "Movie"
-        else:
-            out["type"] = "Movie"
+        out["type"] = "Movie"
 
     # PLATFORM
     out["platform"] = platform_label
 
-    # Cleanup
     standard_cols = ["title", "director", "cast", "listed_in", "description", "country", "rating", "type", "platform"]
     for col in standard_cols:
         if col not in out.columns:
@@ -255,12 +183,10 @@ def normalize_df(df, source_name, platform_label):
     for col in standard_cols:
         out[col] = out[col].fillna("").astype(str)
 
-    # Remove obviously invalid rows
     out["title"] = out["title"].str.strip()
     out = out[out["title"] != ""].copy()
 
     return out
-
 
 # --------------------------------
 # LOAD DATA
@@ -292,7 +218,6 @@ def load_and_prepare_data():
 
     data = pd.concat(frames, ignore_index=True)
 
-    # Final cleanup
     needed_cols = [
         "title", "director", "cast", "listed_in",
         "description", "country", "rating", "type", "platform"
@@ -317,8 +242,6 @@ def load_and_prepare_data():
     )
 
     data["numeric_rating"] = data["rating"].apply(parse_numeric_rating)
-
-    # Keep title-platform unique
     data = data.drop_duplicates(subset=["title_clean", "platform"]).reset_index(drop=True)
 
     return data
@@ -440,9 +363,8 @@ def fetch_details(title, content_type):
     except Exception:
         return None, "", None
 
-
 # --------------------------------
-# RECOMMENDATION FUNCTIONS
+# RECOMMENDATION FUNCTION
 # --------------------------------
 def recommend(title, top_n=5, platform="All", content_type="All"):
     title_clean = title.lower().strip()
@@ -509,75 +431,6 @@ def recommend(title, top_n=5, platform="All", content_type="All"):
 
     return recommendations
 
-
-def cross_platform_recommend(title, top_n=5):
-    title_clean = title.lower().strip()
-
-    matching_rows = data[data["title_clean"] == title_clean]
-    if matching_rows.empty:
-        return []
-
-    idx = matching_rows.index[0]
-    selected_platform_name = matching_rows.iloc[0]["platform"]
-
-    sim_scores_array = cosine_similarity(tfidf_vectors[idx], tfidf_vectors).flatten()
-    sim_scores = list(enumerate(sim_scores_array))
-    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
-
-    results = []
-    seen_titles = set()
-    seen_keys = set()
-
-    for i, score in sim_scores[1:]:
-        row = data.iloc[i]
-        unique_key = (row["title"], row["platform"])
-
-        if score < 0.15:
-            continue
-
-        if row["platform"] == selected_platform_name:
-            continue
-
-        if row["title"].strip().lower() == title_clean:
-            continue
-
-        if row["title"] in seen_titles:
-            continue
-
-        if unique_key in seen_keys:
-            continue
-
-        results.append({
-            "Title": row["title"],
-            "Platform": row["platform"],
-            "Type": row["type"],
-            "Rating": row["rating"],
-            "Score": round(score * 100, 1)
-        })
-
-        seen_titles.add(row["title"])
-        seen_keys.add(unique_key)
-
-        if len(results) == top_n:
-            break
-
-    return results
-
-
-def get_top_trending(n=10):
-    trending = data.copy()
-    trending = trending.sort_values(by=["numeric_rating", "title"], ascending=[False, True])
-    return trending.head(n)
-
-
-def get_best_by_rating(content_type="Movie", n=10):
-    best = data.copy()
-    if content_type != "All":
-        best = best[best["type"].str.lower() == content_type.lower()]
-    best = best.sort_values(by=["numeric_rating", "title"], ascending=[False, True])
-    return best.head(n)
-
-
 # --------------------------------
 # WATCHLIST
 # --------------------------------
@@ -587,80 +440,6 @@ def add_to_watchlist(item):
 
     if key not in existing:
         st.session_state.watchlist.append(item)
-
-
-# --------------------------------
-# TOP TRENDING
-# --------------------------------
-st.markdown('<div class="section-title">🔥 Top Trending</div>', unsafe_allow_html=True)
-trending_items = get_top_trending(5)
-trend_cols = st.columns(5)
-
-for idx, (_, row) in enumerate(trending_items.iterrows()):
-    with trend_cols[idx % 5]:
-        poster, overview, trailer_url = fetch_details(row["title"], row["type"])
-
-        if poster:
-            st.image(poster, use_container_width=True)
-        else:
-            st.markdown('<div class="poster-fallback">No poster available</div>', unsafe_allow_html=True)
-
-        st.markdown(f'<div class="small-title">{row["title"]}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="small-meta">⭐ {row["rating"]}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="small-meta">📺 {row["platform"]}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="small-meta">🎞️ {row["type"]}</div>', unsafe_allow_html=True)
-
-st.markdown("<hr>", unsafe_allow_html=True)
-
-# --------------------------------
-# BEST BY RATING
-# --------------------------------
-st.markdown('<div class="section-title">🏆 Best by Rating</div>', unsafe_allow_html=True)
-best_items = get_best_by_rating("Movie", 5)
-best_cols = st.columns(5)
-
-for idx, (_, row) in enumerate(best_items.iterrows()):
-    with best_cols[idx % 5]:
-        poster, overview, trailer_url = fetch_details(row["title"], row["type"])
-
-        if poster:
-            st.image(poster, use_container_width=True)
-        else:
-            st.markdown('<div class="poster-fallback">No poster available</div>', unsafe_allow_html=True)
-
-        st.markdown(f'<div class="small-title">{row["title"]}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="small-meta">⭐ {row["rating"]}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="small-meta">📺 {row["platform"]}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="small-meta">🎞️ {row["type"]}</div>', unsafe_allow_html=True)
-
-st.markdown("<hr>", unsafe_allow_html=True)
-
-# --------------------------------
-# MOST SIMILAR ACROSS PLATFORMS
-# --------------------------------
-st.markdown('<div class="section-title">🌍 Most Similar Across Platforms</div>', unsafe_allow_html=True)
-cross_results = cross_platform_recommend(selected_movie, top_n=5)
-
-if cross_results:
-    cross_cols = st.columns(5)
-    for idx, item in enumerate(cross_results):
-        with cross_cols[idx % 5]:
-            poster, overview, trailer_url = fetch_details(item["Title"], item["Type"])
-
-            if poster:
-                st.image(poster, use_container_width=True)
-            else:
-                st.markdown('<div class="poster-fallback">No poster available</div>', unsafe_allow_html=True)
-
-            st.markdown(f'<div class="small-title">{item["Title"]}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="small-meta">📺 {item["Platform"]}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="small-meta">🎞️ {item["Type"]}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="small-meta">⭐ {item["Rating"]}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="small-meta">🔥 {item["Score"]}% similar</div>', unsafe_allow_html=True)
-else:
-    st.info("No cross-platform matches found.")
-
-st.markdown("<hr>", unsafe_allow_html=True)
 
 # --------------------------------
 # MAIN RECOMMENDER
@@ -675,7 +454,7 @@ if recommend_btn:
         content_type=selected_type
     )
 
-    st.markdown('<div class="section-title">🎯 Recommended Titles</div>', unsafe_allow_html=True)
+    st.subheader("🎯 Recommended Titles")
 
     if results:
         cols = st.columns(5)
@@ -704,14 +483,14 @@ if recommend_btn:
 
                 if st.button("➕ Add to Watchlist", key=f"watchlist_{idx}_{item['Title']}_{item['Platform']}"):
                     add_to_watchlist(item)
-
-st.markdown("<hr>", unsafe_allow_html=True)
+    else:
+        st.warning("No recommendations found for the selected filters.")
 
 # --------------------------------
 # WATCHLIST DISPLAY
 # --------------------------------
 if show_watchlist:
-    st.markdown('<div class="section-title">📌 My Watchlist</div>', unsafe_allow_html=True)
+    st.subheader("📌 My Watchlist")
 
     if st.session_state.watchlist:
         watchlist_df = pd.DataFrame(st.session_state.watchlist)
