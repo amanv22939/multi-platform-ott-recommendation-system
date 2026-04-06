@@ -55,7 +55,7 @@ def load_and_prepare_data():
             data[col] = ""
 
     for col in needed_cols:
-        data[col] = data[col].fillna("")
+        data[col] = data[col].fillna("").astype(str)
 
     data["title_clean"] = data["title"].str.lower().str.strip()
 
@@ -79,15 +79,15 @@ if data.empty:
     st.stop()
 
 # --------------------------------
-# COMPUTE SIMILARITY
+# BUILD TF-IDF VECTORS
 # --------------------------------
 @st.cache_resource
-def compute_similarity(tags_series):
+def build_tfidf(tags_series):
     tfidf = TfidfVectorizer(stop_words="english", max_features=4000)
     vectors = tfidf.fit_transform(tags_series)
-    return cosine_similarity(vectors)
+    return vectors
 
-similarity = compute_similarity(data["tags"])
+tfidf_vectors = build_tfidf(data["tags"])
 
 # --------------------------------
 # SIDEBAR
@@ -127,7 +127,10 @@ selected_movie = st.selectbox("Select movie or show", filtered_movie_list)
 # --------------------------------
 @st.cache_data(show_spinner=False)
 def fetch_details(title, content_type):
-    api_key = st.secrets["TMDB_API_KEY"]
+    api_key = st.secrets.get("TMDB_API_KEY", None)
+
+    if not api_key:
+        return None, "", None
 
     try:
         clean_title = title.replace(":", "").replace("-", "").strip()
@@ -198,7 +201,8 @@ def recommend(title, top_n=5, platform="All", content_type="All"):
 
     idx = matching_rows.index[0]
 
-    sim_scores = list(enumerate(similarity[idx]))
+    sim_scores_array = cosine_similarity(tfidf_vectors[idx], tfidf_vectors).flatten()
+    sim_scores = list(enumerate(sim_scores_array))
     sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
 
     recommendations = []
