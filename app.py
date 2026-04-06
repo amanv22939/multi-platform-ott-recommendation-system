@@ -29,9 +29,7 @@ def load_and_prepare_data():
     file_map = {
         "Netflix": "netflix_titles.csv",
         "Amazon Prime": "amazon_prime_titles.csv",
-        "Disney+": "disney_plus_titles.csv",
-        "Hulu": "hulu_titles.csv",
-        "Hotstar": "hotstar_titles.csv"
+        "Disney+": "disney_plus_titles.csv"
     }
 
     frames = []
