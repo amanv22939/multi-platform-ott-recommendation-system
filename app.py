@@ -75,11 +75,11 @@ html, body, [class*="css"] {
 
 .card-title {
     color: white;
-    font-size: 1.25rem;
+    font-size: 1.2rem;
     font-weight: 700;
     margin-top: 0.9rem;
     margin-bottom: 0.8rem;
-    min-height: 60px;
+    min-height: 64px;
 }
 
 .meta {
@@ -145,16 +145,12 @@ if "watchlist" not in st.session_state:
 # HELPERS
 # --------------------------------
 def parse_numeric_rating(value):
-    """
-    Converts ratings like '7.8', '8', 'TV-MA', 'PG-13', '' into a usable numeric score.
-    Non-numeric values return 0.
-    """
     if pd.isna(value):
         return 0.0
 
     text = str(value).strip()
-
     match = re.search(r"\d+(\.\d+)?", text)
+
     if match:
         try:
             return float(match.group())
@@ -162,7 +158,6 @@ def parse_numeric_rating(value):
             return 0.0
 
     return 0.0
-
 
 # --------------------------------
 # LOAD DATA
@@ -212,11 +207,9 @@ def load_and_prepare_data():
     )
 
     data["numeric_rating"] = data["rating"].apply(parse_numeric_rating)
-
     data = data.drop_duplicates(subset=["title_clean", "platform"]).reset_index(drop=True)
 
     return data
-
 
 data = load_and_prepare_data()
 
@@ -225,7 +218,7 @@ if data.empty:
     st.stop()
 
 # --------------------------------
-# BUILD TF-IDF VECTORS
+# BUILD TF-IDF
 # --------------------------------
 @st.cache_resource
 def build_tfidf(tags_series):
@@ -278,7 +271,7 @@ def fetch_details(title, content_type):
         return None, "", None
 
     try:
-        clean_title = title.replace(":", "").replace("-", "").strip()
+        clean_title = title.split(":")[0].strip()
 
         if content_type == "TV Show":
             search_url = f"https://api.themoviedb.org/3/search/tv?api_key={api_key}&query={clean_title}"
@@ -289,7 +282,7 @@ def fetch_details(title, content_type):
         search_data = search_response.json()
 
         if "results" not in search_data or len(search_data["results"]) == 0:
-            alt_title = title.split(":")[0].strip()
+            alt_title = title.replace(":", "").replace("-", "").strip()
 
             if content_type == "TV Show":
                 search_url = f"https://api.themoviedb.org/3/search/tv?api_key={api_key}&query={alt_title}"
@@ -334,7 +327,6 @@ def fetch_details(title, content_type):
     except Exception:
         return None, "", None
 
-
 # --------------------------------
 # RECOMMENDATION FUNCTIONS
 # --------------------------------
@@ -346,16 +338,15 @@ def recommend(title, top_n=5, platform="All", content_type="All"):
         return []
 
     idx = matching_rows.index[0]
-
     sim_scores_array = cosine_similarity(tfidf_vectors[idx], tfidf_vectors).flatten()
     sim_scores = list(enumerate(sim_scores_array))
 
     recommendations = []
-    seen = set()
+    seen_titles = set()
+    seen_keys = set()
 
-    # Hybrid score = 0.75 * similarity + 0.25 * normalized rating
-    scored_items = []
     max_rating = max(data["numeric_rating"].max(), 1)
+    scored_items = []
 
     for i, sim_score in sim_scores:
         row = data.iloc[i]
@@ -369,7 +360,16 @@ def recommend(title, top_n=5, platform="All", content_type="All"):
         row = data.iloc[i]
         unique_key = (row["title"], row["platform"])
 
-        if unique_key in seen:
+        if sim_score < 0.10:
+            continue
+
+        if row["title"].strip().lower() == title_clean:
+            continue
+
+        if row["title"] in seen_titles:
+            continue
+
+        if unique_key in seen_keys:
             continue
 
         if platform != "All" and row["platform"] != platform:
@@ -387,7 +387,8 @@ def recommend(title, top_n=5, platform="All", content_type="All"):
             "Score": round(hybrid_score * 100, 1)
         })
 
-        seen.add(unique_key)
+        seen_titles.add(row["title"])
+        seen_keys.add(unique_key)
 
         if len(recommendations) == top_n:
             break
@@ -410,16 +411,26 @@ def cross_platform_recommend(title, top_n=5):
     sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
 
     results = []
-    seen = set()
+    seen_titles = set()
+    seen_keys = set()
 
     for i, score in sim_scores[1:]:
         row = data.iloc[i]
         unique_key = (row["title"], row["platform"])
 
-        if unique_key in seen:
+        if score < 0.15:
             continue
 
         if row["platform"] == selected_platform_name:
+            continue
+
+        if row["title"].strip().lower() == title_clean:
+            continue
+
+        if row["title"] in seen_titles:
+            continue
+
+        if unique_key in seen_keys:
             continue
 
         results.append({
@@ -430,7 +441,8 @@ def cross_platform_recommend(title, top_n=5):
             "Score": round(score * 100, 1)
         })
 
-        seen.add(unique_key)
+        seen_titles.add(row["title"])
+        seen_keys.add(unique_key)
 
         if len(results) == top_n:
             break
@@ -451,7 +463,6 @@ def get_best_by_rating(content_type="Movie", n=10):
     best = best.sort_values(by=["numeric_rating", "title"], ascending=[False, True])
     return best.head(n)
 
-
 # --------------------------------
 # WATCHLIST
 # --------------------------------
@@ -461,7 +472,6 @@ def add_to_watchlist(item):
 
     if key not in existing:
         st.session_state.watchlist.append(item)
-
 
 # --------------------------------
 # TOP TRENDING
@@ -474,6 +484,7 @@ for idx, (_, row) in enumerate(trending_items.iterrows()):
     with trend_cols[idx % 5]:
         poster, overview, trailer_url = fetch_details(row["title"], row["type"])
         st.markdown('<div class="small-card">', unsafe_allow_html=True)
+
         if poster:
             st.image(poster, use_container_width=True)
         else:
@@ -498,6 +509,7 @@ for idx, (_, row) in enumerate(best_items.iterrows()):
     with best_cols[idx % 5]:
         poster, overview, trailer_url = fetch_details(row["title"], row["type"])
         st.markdown('<div class="small-card">', unsafe_allow_html=True)
+
         if poster:
             st.image(poster, use_container_width=True)
         else:
