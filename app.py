@@ -106,18 +106,6 @@ def parse_numeric_rating(value):
     return 0.0
 
 
-def parse_genres(value):
-    if pd.isna(value):
-        return ""
-
-    text = str(value).strip()
-
-    if not text:
-        return ""
-
-    return text
-
-
 def normalize_df(df, source_name, platform_label):
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
@@ -175,7 +163,11 @@ def normalize_df(df, source_name, platform_label):
     # PLATFORM
     out["platform"] = platform_label
 
-    standard_cols = ["title", "director", "cast", "listed_in", "description", "country", "rating", "type", "platform"]
+    standard_cols = [
+        "title", "director", "cast", "listed_in",
+        "description", "country", "rating", "type", "platform"
+    ]
+
     for col in standard_cols:
         if col not in out.columns:
             out[col] = ""
@@ -286,15 +278,23 @@ movie_list = sorted(data["title"].dropna().unique().tolist())
 search_query = st.text_input("🔍 Search movie or show")
 
 if search_query:
-    filtered_movie_list = [m for m in movie_list if search_query.lower() in m.lower()]
+    filtered_movie_list = [
+        m for m in movie_list
+        if m.lower().startswith(search_query.lower())
+    ][:20]
 else:
-    filtered_movie_list = movie_list
+    filtered_movie_list = movie_list[:20]
 
 if not filtered_movie_list:
     st.warning("No titles found for this search.")
     st.stop()
 
-selected_movie = st.selectbox("Select movie or show", filtered_movie_list)
+selected_movie = st.selectbox(
+    "Select movie or show",
+    ["-- Select a movie --"] + filtered_movie_list
+)
+
+recommend_btn = st.button("Recommend")
 
 # --------------------------------
 # TMDB DETAILS
@@ -309,7 +309,7 @@ def fetch_details(title, content_type):
     try:
         clean_title = title.split(":")[0].strip()
 
-        if content_type.lower() == "tv show":
+        if str(content_type).lower() == "tv show":
             search_url = f"https://api.themoviedb.org/3/search/tv?api_key={api_key}&query={clean_title}"
         else:
             search_url = f"https://api.themoviedb.org/3/search/movie?api_key={api_key}&query={clean_title}"
@@ -320,7 +320,7 @@ def fetch_details(title, content_type):
         if "results" not in search_data or len(search_data["results"]) == 0:
             alt_title = title.replace(":", "").replace("-", "").strip()
 
-            if content_type.lower() == "tv show":
+            if str(content_type).lower() == "tv show":
                 search_url = f"https://api.themoviedb.org/3/search/tv?api_key={api_key}&query={alt_title}"
             else:
                 search_url = f"https://api.themoviedb.org/3/search/movie?api_key={api_key}&query={alt_title}"
@@ -341,7 +341,7 @@ def fetch_details(title, content_type):
 
             trailer_url = None
             if item_id:
-                if content_type.lower() == "tv show":
+                if str(content_type).lower() == "tv show":
                     video_url = f"https://api.themoviedb.org/3/tv/{item_id}/videos?api_key={api_key}"
                 else:
                     video_url = f"https://api.themoviedb.org/3/movie/{item_id}/videos?api_key={api_key}"
@@ -444,9 +444,11 @@ def add_to_watchlist(item):
 # --------------------------------
 # MAIN RECOMMENDER
 # --------------------------------
-recommend_btn = st.button("Recommend")
-
 if recommend_btn:
+    if selected_movie == "-- Select a movie --":
+        st.warning("⚠️ Please select a movie first")
+        st.stop()
+
     results = recommend(
         selected_movie,
         top_n=top_n,
